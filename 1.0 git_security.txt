@@ -1,0 +1,22 @@
+devsecops
+
+In git
+1. pre-commit checks
+This can be done by installing pre-commit check in local machine. And pre-commit checks verify for any leaks in the code like password.
+
+if for instance few developers do not install pre-commit checks in local machine. They may commit the unsecured code to the main branch.
+
+To avoid this we can directly write gitleaks code in the Git.yaml file. So before the pipeline starts. Git checks for any unsecured code like urls and passwords.
+
+1.0 
+Branch protection rules- By using this option we can make sure every commit is pushed to main branch only after pullrequest is accepted”.
+
+1.1
+dependabot. This checks for any vulnerabilities in files like ex-pom.xml. It will monitor files like npm related packages, docker related packages. It will look at vulnerabilities database A database which has all vulnerabilities in the world. And if finds a package that is vulnerable it will automatically create pull request and merge the PR. Within minutes a vulnerabilities is disclosed in the world. It will update the version in our repository so that we are safe from vulnerability.
+It is very useful when we are working with multiple applications.
+
+What it will do?
+It will look for our yml file,pom.xml or npm file and it will compare the version with vulnerability database. If our version is vulnerable automatically it creates a pull request and update our go.mod file. It can also merge the file for us so that by the time we realize depandabot already fixes the issue.
+
+
+

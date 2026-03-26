@@ -1,0 +1,111 @@
+Iac
+
+How to identify insecure data terraform files using checkov.
+
+1. check-ov-: We need to install checkov in the local-machine or ec2-instance. from where we are pushing the code to GitHub.
+
+And if any resources which are insecure is found like (Open security groups (0.0.0.0/0), Unencrypted S3 buckets, Missing logging / versioning, Weak IAM policies).
+Suppose if a user is trying to create a s3 bucket with public access true. And another developer pushes the log files  into the same public bucket its a security threat. So when we are creating these kind of resources which are security prone. Checkov verifies it and shows error.it denies the push and gives failed error message. We can tell every engineer has setup checkov locally and also we have integrated checkov in CI file.So anyone try to pushes the terraform configuration even there checkov runs and validates the configuration.
+
+Steps to Install checkov.
+https://github.com/saisharan1467/DevSecOps-Zero-to-Hero/blob/main/03-IaC/01-Checkov.md
+
+
+
+
+
+
+
+
+2. Hashicorp-vault- Many people say hashicorp vault is mainly used to store the secrets. But it can generate long lived secrets. Ex- If a devops has 6members working on a repo. So if the team wants to create resources on cloud using GitLab ci. They may create a user in aws (bot_user) and pass the access key and secret key to CI in the GitLab in secrets and variables. And refer the secrets in the terraform code. But this way of storing the secrets also has security threat because all developers have access to CI.. Maybe one of the developer leaves the team and he may have the access key and secret key. Having these keys he may destroy the resources or attempt malfunctioning.  
+
+So we need a secret management solution.
+We can create secrets using Hashicorp Vault. And this is production like workflow.
+
+All the terraform resources will be in git repository. If one of developers makes changes and updates the repo. And pushes changes to GitHub repo. Now in GitHub actions is trigerred. GitHub actions doesn't have credentials. It would go to hashicorp vault and request that it doesn't credentials to go to AWS and create resources and asks to provide short-lived credentials. That is can you give me credentials for AWS that lives for 5min. We can design this according to our GitHub actions execution time.
+GitHub actions takes the secrets and executes aws resources. 
+
+hashicorp vault generate short-lived credentials for CI/CD systems
+
+- to setup vault. We give vault with aws-credentials. Vault uses aws credentials and creates iam user. That iam user is short lived. GitHub actions gets short-lived credentials through OIDC protocol.This is one-time setup. We can install vault on ec2-instance or on k8-s and we have to configure vault. 
+
+GitHub actions uses OIDC to interact with hashicorp valult and get temporary credentials..
+
+steps to setup hashicorp-vault.
+https://github.com/saisharan1467/DevSecOps-Zero-to-Hero/blob/main/03-IaC/02-Vault.md
+
+-- In vault UI page enable aws secret engine
+And in ec2-instance where we installed vault enter below command. create a user and give access and secret key to below vault command.
+
+vault write aws/config/root \
+    access_key="AKIA..." \
+    secret_key="SECRET..." \
+    region="us-east-1"
+
+
+---
+Adding iam role to the user created in aws.if we are using root user we don't need to do that. But we will be given with iam user in production. Whichever permissions we want to add to the iam user we can add permissions using below vault write command. below command we are giving s3 full permissions to the iam user.
+
+# Create the role that vends S3 keys
+vault write aws/roles/terraform-role \
+    credential_type=iam_user \
+    policy_document=-<<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "s3:*",
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+
+#
+we are enabling this authentication because we want vault  to be accessed by GitHub actions.For GitHub actions to access the vault and request for credentials we need to enable authentication method. GitHub action will use jwt (java web token.) 
+
+vault auth enable jwt
+
+#
+we need to provide oidc configuration that GitHub is going to use.
+
+# Configure OIDC connection
+vault write auth/jwt/config \
+    oidc_discovery_url="https://token.actions.githubusercontent.com" \
+    bound_issuer="https://token.actions.githubusercontent.com"
+
+#
+Writing policy and bind it to GitHub policy.
+
+
+# Create Policy
+vault policy write terraform-policy - <<EOF
+path "aws/creds/terraform-role" {
+  capabilities = ["read"]
+}
+EOF
+
+We created read policy above and we are granting read-policy to our git-hub repository.
+
+# Bind Repo to Policy (Replace with your GitHub user/repo)
+vault write auth/jwt/role/gh-actions-role - <<EOF
+{
+  "role_type": "jwt",
+  "bound_audiences": ["https://github.com/iam-veeramalla"],
+  "user_claim": "sub",
+  "bound_claims_type": "glob",
+  "bound_claims": {
+    "sub": "repo:iam-veeramalla/DevSecOps-Zero-to-Hero:*"
+  },
+  "token_policies": ["terraform-policy"],
+  "token_ttl": "1h"
+}
+EOF
+
+ex- repo:iam-veeramalla/DevSecOps-Zero-to-Hero:* this repo will get read access. And through read access and through jwt tokens. It will make request to vault server and vault server will return it with temporary credentials. 
+
+
+--In the CI file we need to give ip of instance where we installed vault.
+
+A temporary user will get created in aws and gets deleted as soon as the pipeline is finished.

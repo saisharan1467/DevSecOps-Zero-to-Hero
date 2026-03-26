@@ -1,0 +1,230 @@
+Securing containers
+1. https://github.com/saisharan1467/DevSecOps-Zero-to-Hero/blob/main/04-Container-Security/app.js
+
+In above repo app.js is the source code for the application. and package.json is the dependency file and we have express has one of the dependency for the application.
+
+2. Suppose if we have a junior devops engineer has a task to containerize the application. He mainly focus on completing the task not caring much about securing the application. Firstly he writes the docker file. He clones the project into local machine to have source code.
+
+git clone https://github.com/saisharan1467/DevSecOps-Zero-to-Hero.git
+
+cd 04-Container-Security
+
+As this is the node.js application the base image would be node base image. so that we would not be able to worry about node base image installation.
+
+if we have ubuntu base image. We have to use RUN command to update the apt repositories and then we have to install ubuntu on ubuntu base image. 
+ex- From ubuntu
+    RUN 
+
+3. Here we are going with node base image
+
+ 
+FROM node:25
+
+WORDIR /app (switch to work directory to run all commands from working directory.)
+
+COPY . . (copy source code-  app.js,package.json)
+
+RUN npm install (runs commands npm install, npm start)
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
+
+4. Now we are building docker image from docker file.
+
+docker build -t insecureimage .
+
+--- Docker image gets created.
+
+docker run -p 3000:3000 insecureimage
+if the app is running we can see
+
+App running on port 3000
+
+
+5. Verify also with curl command
+
+curl localhost:3000
+We will be able to access the node.js app. But if we see uid:0 meaning the container is running as root user. 
+
+we can verify using command
+docker run -it (image_name) sh
+now enter 
+id
+(We will be able to see root. means our container is running as root). 
+
+6. The security challenges here are. We do not give administrator access of our laptop to anyone. Because they can create files and can download anything. Even they are bad actors they can run 100 processes on our laptop and can make our laptop unusable. 
+
+In same way if a bad actor get admin access to our container. They can create multiple volumes in the container to make the container look heavy. As the container as root user and it is running on local-machine or vm. Container is running using docker runtime and docker runtime always runs as root user. The attacker can now access docker run time. From docker runtime they also access the host machine as well. If they can access the host they are already within our network and can access our infrastructure too if we don't have proper vpc. 
+
+7. if we are devops engineer and want to follow security best practises. Just using more steps in docker file we can run docker container as non-root user. 
+
+Now in the same docker file. we can create a user just before we are performing any instrutions.
+
+
+FROM node:25
+
+WORDIR /app (switch to work directory to run all commands from working directory.)
+
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+(Here we are creating a group and adding the user to the group)
+
+COPY . . (copy source code-  app.js,package.json)
+
+RUN npm install (runs commands npm install, npm start)
+(till here commands are executed as root user)
+
+USER appuser
+(switching the user, so whenever someone logins into container they login as appuser. So appuser doesn't have elevated permissions and using this user if they try to perform something they fail to do it.)
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
+
+8. Now build the docker image using this file.
+
+docker build -t (image_name)
+docker run -it (image_name) sh
+docker run -p 3000:3000 (image_name )
+now we are in the container
+
+#enter id 
+we can see the id as app_user. 
+
+Now we can verify the app user as elevated privileges as root user or not. For verifying install a package
+
+apt install x
+
+It says permission denied.
+
+9.Now even if a bad actor has access to the container. It shouldn't be a problem.
+
+10. We created the image using non-root user but there is still a task left.
+
+if we enter docker images we can see our image got created.
+
+now if we see the content size of the image it maybe 400mb. So the image should not be that high in size. It's too much for image. In this image it's just 20 lines of code.
+
+11. But how does the container size impact my security?
+It does. When our image size is more it means we have more packages within the container.  
+
+It can be system packages meaning the base packages in this case the one that comes with node-25
+
+It can also be application packages. We have run npm install. To build the node.js application. node.js or npm downloads the packages from the internet and even after the application has been built the some of the packages can stay within our container image. Now this is a problem because we don't need this packages at the runtime
+
+12. There are two stages for the application i)Build stage ii)Run or Execution Stage.  We need a lot of packages at build stage because we want lot of packages to be downloaded from internet to build the app to compile the app. But we don't need that packages during the runtime.
+
+During runtime of the application you have a jar file or war file or basically a binary. We need this binary and a runtime environment to run the binary. 
+
+ Now if we keep this packages that we downloaded still in the container image. We are not checking at timely basis that these packages are vulnerable. For ex- abc-1.0.0 package we have downloaded for building our application  today this package version is fine. But may be two months down the line .There may be a critical security issue with this version. Now ideally we need to update it to newer version(1.0.1).  But why will login into container and why we bother to check the version. A lot of people will ignore this 
+
+13. So our container is running in production and will be running with 1.0.0 package. Imagine a bad actor may has access to container and though he may have access as non-root user but still as there is a vulnerable version. The bad actor can attack through this vulnerable version. This package can be threat to our organisation.  How can we avoid this?
+
+So break our docker file into two parts.This is called multi-stage build.  The first stage will be build stage and second stage will be run stage. In build stage we focus on npm install in this case and in run stage we focus on npm start. ii) And from build stage take the binary created to run stage iii) And finally the image will have only the artifacts from run stage. 
+
+In docker file we can have n number of stages. But docker will consider only the last stage. The image that we have will only be created from last stage. So as devsecops engineer in build stage we can download any no. of packages from internet. and build the binary. 
+Now in run stage only copy the binary and have the container runtime. In our case node is the container run time. So in run stage we can have node container run time and binary from the build stage.  
+
+Create CMD and we can have runtime environment ready. And when we do this our container image significantly goes down. When container image goes down that means there are less no .of packages within the container. When less no.of packages less impact radius.
+
+
+Breaking container images into two stages.
+
+FROM node:25 AS builder
+
+WORDIR /build 
+
+COPY package.json ./
+RUN npm install
+
+COPY . . 
+ 
+FROM node:25-slim
+(light-weight image which doesn't have what the normal node image has and it is fine because we are executing only node.js app or we are running only node.js app. Here we are not building the app so we do not need all the packages available in node:25. These images are particularly created for multi-stage docker builds )
+
+WORDIR /app
+
+COPY --from=builder /build/node_modules ./node_modules
+COPY --from=builder /build/app.js ./app.js
+(We will copy binary or artifacts  created in build stage. artiacts are the node modules and we will also copy app.js which is our source code)
+
+EXPOSE 3000
+
+CMD ["node", "app.js"] (we are not running node start because we are already having node.modules which are modules required to run the app.js )
+
+Where we are running the docker file we need to copy the app.js and package.json files too because we are giving command COPY . .
+
+Now the docker image size will be very low. 
+
+14.
+The application dealt here is very small application it has app.js and package.json. Imagine we have an ecommerce application or real time application. It has 100s of files then it will be more benefited for us incase of container image size. 
+
+15)Even now we have a chance to reduce our image size and  use less number of packages on container image. 
+So if we exec into image for ex
+
+docker run (image_name) sh
+docker run -it (image_name) sh
+
+Here we can notice there are lots of system packages.
+
+We can have 100s of packages ex- apt which are not needed in the container. a good actor can still find ways to attack. If they have apt they will find ways to install something on our container and hack our container. Not only apt ex- /etc folder there will be 100s of packages in the etc folder what is the purpose of it. 
+This is where distroless images can help us.  These images will not help us with reducing our image size from app-packages point of view but they can also help reduce system related binaries within the container. 
+
+How do we do that?
+We can just use the container image that we are using. Only change we can make using the docker file within the run-time.
+
+
+FROM node:25 AS builder
+
+WORDIR /build 
+
+COPY package.json ./
+RUN npm install
+
+COPY . . 
+
+FROM gcr.io/distroless/nodejs20-debian12
+
+WORKDIR /app
+
+COPY --from=builder /build/node_modules ./node_modules
+COPY --from=builder /build/app,js ./app.js
+
+EXPOSE 3000
+CMD ["node", "app.js"]
+
+16) Now after building the image we can see the image size got reduced further.
+
+We can push the docker image to production now. But we can also add to what we have created to the image till now.
+
+17)How we create .gitignore file in GitHub. In docker we can create .dockerignore file in the repository. 
+
+What is the use of .dockerignore file?
+In the docker file we are using COPY . . This is a common practise and what this command does is it copies everything within the folder onto the docker image. It copies app.js,package.json and what if it accidentally copies files .git, .env,node_modules. Even why it should copy Dockerfile. This can only increase size of our docker image. We can eliminate this using .dockerignore file. Create .dockerignore and put in the folder where we have our source code.
+ 
+Now if we have copy . . what docker does is. It checks the .dockerignore and ignores all the file mentioned in .dockerignore file which are unwanted. This way we can reduce the image size.
+
+
+18)How to use docker run command. 
+We can run docker run command using some parameters
+ex.
+docker run \
+  --read-only \
+  --tmpfs /tmp \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --pids-limit 100 \
+  --memory 256m \
+  --cpus 0.5 \
+  -p 3000:3000 \
+  secure-app
+
+--read-only- means the proceses that is running within container becomes read-only process instead of write process. But how if my process wants to write some information to localhost. we can write
+
+--tmpfs /tmp or any temporary files system. Now if hackers wants to create volumes or try to create something on the host from container this will prevent because our container is running as read-only container in above step. And if at all if it want to write something it has a tmpfs to which it can write. 
+
+--cap-drop ALL \
+  --security-opt no-new-privileges \
+This both prevent hackers to assign elevated privileges after entering into container. so that they can not only access container but also host system.
+
+--pids-limit 100- This is used to limit the process. To prevent to perform DDOD attacks on the containers.
